@@ -2,6 +2,16 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable
 
 
+class IAggregation(ABC):
+    @abstractmethod
+    def default_acc(self) -> Any:
+        pass
+
+    @abstractmethod
+    def on_new(self, acc: Any, new: Any) -> Any:
+        pass
+
+
 class IStream(ABC):
     def __init__(self, graph: Any, name: str) -> None:
         self._graph = graph
@@ -21,7 +31,6 @@ class IStream(ABC):
         return self._children
 
     def emit(self, value: Any, upstream: "IStream" = None) -> None:
-        print(f"[{self.name}] receiving {value}")
         for child in self._children:
             print(f"[{self.name}] emitting {value} to {child.name}")
             child.emit(value, upstream=self)
@@ -87,6 +96,14 @@ class Stream(IStream):
         self._children.append(new_stream)
         return new_stream
 
+    def aggregate(self, agg: IAggregation, name: str = None) -> "Agg":
+        new_stream = Agg(
+            self._graph, name or f"output-{self._graph.next_stream_id}", agg
+        )
+        self._graph.register_stream(new_stream)
+        self._children.append(new_stream)
+        return new_stream
+
 
 class Map(Stream):
     def __init__(self, graph: Graph, name: str, func: Callable) -> None:
@@ -135,7 +152,7 @@ class Zip(Stream):
         super().emit(result, upstream=self)
 
 
-class Output(IOutputStream):
+class Output(Stream, IOutputStream):
     def __init__(self, graph: Graph, name: str) -> None:
         super().__init__(graph, name)
         self._current_value = None
@@ -146,3 +163,18 @@ class Output(IOutputStream):
     def emit(self, value: Any, upstream: "IStream" = None) -> None:
         print(f"[{self.name}] receiving {value}")
         self._current_value = value
+        super().emit(value, upstream=self)
+
+
+class Agg(Stream):
+    def __init__(self, graph: Graph, name: str, agg: IAggregation) -> None:
+        super().__init__(graph, name)
+        self._agg = agg
+        self._acc = self._agg.default_acc()
+
+    def emit(self, value: Any, upstream: "IStream" = None) -> None:
+        print(f"[{self.name}] receiving {value}")
+        result = self._agg.on_new(self._acc, value)
+        self._acc = result
+        print(f"[{self.name}] emitting {result}")
+        super().emit(result, upstream=self)
